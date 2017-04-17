@@ -211,12 +211,25 @@ public abstract class BaseActivity extends FragmentActivity implements ServiceCo
      */
     @Override
     protected void onResume() {
+        sendBroadcast(new Intent("com.microntek.active"));
         super.onResume();
         // Set the playback drawables
         updatePlaybackControls();
         // Current info
         onMetaChanged();
+
     }
+
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    protected void onPause() {
+        sendBroadcast(new Intent("com.microntek.active"));
+        super.onPause();
+
+    }
+
 
     /**
      * {@inheritDoc}
@@ -224,7 +237,7 @@ public abstract class BaseActivity extends FragmentActivity implements ServiceCo
     @Override
     protected void onStart() {
         super.onStart();
-        final IntentFilter filter = new IntentFilter();
+        IntentFilter filter = new IntentFilter();
         // Play and pause changes
         filter.addAction(MusicPlaybackService.PLAYSTATE_CHANGED);
         // Track changes
@@ -236,6 +249,7 @@ public abstract class BaseActivity extends FragmentActivity implements ServiceCo
         // If there is an error playing a track
         filter.addAction(MusicPlaybackService.TRACK_ERROR);
         registerReceiver(mPlaybackStatus, filter);
+
 
         mPlayPauseProgressButton.resume();
     }

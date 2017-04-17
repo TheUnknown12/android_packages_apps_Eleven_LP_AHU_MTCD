@@ -425,6 +425,13 @@ public class MusicActivity extends SlidingPanelActivity implements
                 MusicUtils.playArtist(this, id, position, false);
                 handled = true;
             }
+        } else {
+            //added to start playing when we start the app and we have something in queue
+            if (!MusicUtils.isPlaying() && MusicUtils.getQueueSize() > 0) {
+                MusicUtils.playOrPause();
+            }
+
+            handled = true;
         }
 
         // reset intent as it was handled as a playback request

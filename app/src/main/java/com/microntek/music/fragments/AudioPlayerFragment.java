@@ -73,6 +73,8 @@ import com.cyanogenmod.eleven.widgets.VisualizerView;
 
 import java.lang.ref.WeakReference;
 
+import static com.cyanogenmod.eleven.utils.MusicUtils.getQueuePosition;
+import static com.cyanogenmod.eleven.utils.MusicUtils.getQueueSize;
 import static com.cyanogenmod.eleven.utils.MusicUtils.mService;
 
 public class AudioPlayerFragment extends Fragment implements ServiceConnection {
@@ -245,14 +247,9 @@ public class AudioPlayerFragment extends Fragment implements ServiceConnection {
         // Refresh the current time
         final long next = refreshCurrentTime();
         queueNextRefresh(next);
-        //Create widgets
-        AhuUtils.addWdiget(getActivity());
-        //Send play state = pause
-        if (MusicUtils.isPlaying()) {
-            AhuUtils.sendStateInfo(getActivity(), 1);
-        } else {
-            AhuUtils.sendStateInfo(getActivity(), 2);
-        }
+
+
+
 
 
 
@@ -272,8 +269,7 @@ public class AudioPlayerFragment extends Fragment implements ServiceConnection {
 
         mImageFetcher.flush();
 
-        //update AHUWidget with state pause
-        AhuUtils.sendStateInfo(getActivity(), 2);
+
     }
 
     @Override
@@ -295,7 +291,7 @@ public class AudioPlayerFragment extends Fragment implements ServiceConnection {
             //$FALL-THROUGH$
         }
 
-        AhuUtils.removeWidget(getActivity());
+
     }
 
     /**
@@ -461,8 +457,8 @@ public class AudioPlayerFragment extends Fragment implements ServiceConnection {
         queueNextRefresh(1);
 
         //updateWidget
-        AhuUtils.sendTitleInfo(getActivity());
-        AhuUtils.sendAlbumUpdate(getActivity());
+//        AhuUtils.sendTitleInfo(getActivity());
+//        AhuUtils.updateWidgetAlbum(getActivity());
     }
 
     /**
@@ -568,6 +564,7 @@ public class AudioPlayerFragment extends Fragment implements ServiceConnection {
         } else {
             mCurrentTime.setText(MusicUtils.makeShortTimeString(getActivity(), pos / 1000));
             AhuUtils.sendTimeInfo(getActivity(), pos,mTotalTimeW);
+            AhuUtils.sendCanbusinfo(getActivity(), pos,mTotalTimeW, getQueueSize(), getQueuePosition(), MusicUtils.getArtistName(), MusicUtils.getTrackName());
         }
     }
 

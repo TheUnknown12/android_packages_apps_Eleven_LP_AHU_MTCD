@@ -89,7 +89,7 @@ import java.util.TreeSet;
 @SuppressLint("NewApi")
 public class MusicPlaybackService extends Service {
     private static final String TAG = "MusicPlaybackService";
-    private static final boolean D = false;
+    private static final boolean D = true;
 
     /**
      * Indicates that the music has paused or resumed
@@ -192,6 +192,7 @@ public class MusicPlaybackService extends Service {
     public static final String SHUFFLE_ACTION = "com.cyanogenmod.eleven.shuffle";
 
     public static final String FROM_MEDIA_BUTTON = "frommediabutton";
+    public static final String FROM_AHU_BUTTON = "fromahubutton";
 
     /**
      * Used to easily notify a list that it should refresh. i.e. A playlist
@@ -200,9 +201,9 @@ public class MusicPlaybackService extends Service {
     public static final String REFRESH = "com.cyanogenmod.eleven.refresh";
 
     /**
-     * Used by the alarm intent to shutdown the service after being idle
+     * Used by the alarm intent to shutdown the service after being idle /or receiving botocheck
      */
-    private static final String SHUTDOWN = "com.cyanogenmod.eleven.shutdown";
+    public static final String SHUTDOWN = "com.cyanogenmod.eleven.shutdown";
 
     /**
      * Called to notify of a timed text
@@ -227,6 +228,7 @@ public class MusicPlaybackService extends Service {
     public static final String CMDPREVIOUS = "previous";
 
     public static final String CMDNEXT = "next";
+    public static final String CMDSETTRACK = "settrack";
 
     public static final String CMDNOTIF = "buttonId";
 
@@ -332,6 +334,12 @@ public class MusicPlaybackService extends Service {
      */
     public static final int MAX_HISTORY_SIZE = 1000;
 
+    private static  Boolean AHU_WIDGET_STATUS = false;
+    private static  Boolean AHU_AUDIOCHANNEL_STATUS = false;
+    /**
+     * Used to know if Bluetooth call is in place
+     */
+    public static boolean mBtLock = false;
     public interface TrackErrorExtra {
         /**
          * Name of the track that was unable to play
@@ -474,6 +482,7 @@ public class MusicPlaybackService extends Service {
 
     private ComponentName mMediaButtonReceiverComponent;
 
+
     // We use this to distinguish between different cards when saving/restoring
     // playlists
     private int mCardId;
@@ -502,6 +511,7 @@ public class MusicPlaybackService extends Service {
     private HandlerThread mHandlerThread;
 
     private BroadcastReceiver mUnmountReceiver = null;
+    private BroadcastReceiver mAhuButtonIntentReceiver = null;
 
     // to improve perf, instead of hitting the disk cache or file cache, store the bitmaps in memory
     private String mCachedKey;
@@ -571,19 +581,25 @@ public class MusicPlaybackService extends Service {
         mServiceInUse = false;
         saveQueue(true);
 
-        if (mIsSupposedToBePlaying || mPausedByTransientLossOfFocus) {
-            // Something is currently playing, or will be playing once
-            // an in-progress action requesting audio focus ends, so don't stop
-            // the service now.
-            return true;
-
-            // If there is a playlist but playback is paused, then wait a while
-            // before stopping the service, so that pause/resume isn't slow.
-            // Also delay stopping the service if we're transitioning between
-            // tracks.
-        } else if (mPlaylist.size() > 0 || mPlayerHandler.hasMessages(TRACK_ENDED)) {
-            scheduleDelayedShutdown();
-            return true;
+//        if (mIsSupposedToBePlaying || mPausedByTransientLossOfFocus) {
+//            // Something is currently playing, or will be playing once
+//            // an in-progress action requesting audio focus ends, so don't stop
+//            // the service now.
+//            return true;
+//
+//            // delay stopping the service if we're transitioning between
+//            // tracks.
+//        }
+//        else if ( mPlayerHandler.hasMessages(TRACK_ENDED)) {
+//
+//
+//            scheduleDelayedShutdown();
+//            return true;
+//        }
+        if (AHU_WIDGET_STATUS) {
+            AhuUtils.sendStateInfo(getApplicationContext(), 0);
+            AhuUtils.removeWidget(getApplicationContext());
+            AHU_WIDGET_STATUS = false;
         }
         stopSelf(mServiceStartId);
 
@@ -650,6 +666,19 @@ public class MusicPlaybackService extends Service {
 
         registerExternalStorageListener();
 
+        //set audio channel enter
+        mAudioManager.setParameters("av_channel_enter=sys");
+        AHU_AUDIOCHANNEL_STATUS = true;
+        //register AHU button receiver
+        registerAhuButtonIntentReceiver();
+
+        //add widgets
+        if (!AHU_WIDGET_STATUS) {
+            AhuUtils.addWdiget(getApplicationContext());
+            AHU_WIDGET_STATUS = true;
+        }
+        //Start canbus
+        AhuUtils.sendCanBusMusicOn(getApplicationContext());
         // Initialize the media player
         mPlayer = new MultiPlayer(this);
         mPlayer.setHandler(mPlayerHandler);
@@ -669,6 +698,7 @@ public class MusicPlaybackService extends Service {
         filter.addAction(REPEAT_ACTION);
         filter.addAction(SHUFFLE_ACTION);
         //Add AHU actions
+        filter.addAction(SHUTDOWN);
         filter.addAction(PLAY_ACTION_AHU);
         filter.addAction(PAUSE_ACTION_AHU);
         filter.addAction(NEXT_ACTION_AHU);
@@ -783,6 +813,7 @@ public class MusicPlaybackService extends Service {
 
         // Unregister the mount listener
         unregisterReceiver(mIntentReceiver);
+
         if (mUnmountReceiver != null) {
             unregisterReceiver(mUnmountReceiver);
             mUnmountReceiver = null;
@@ -790,9 +821,26 @@ public class MusicPlaybackService extends Service {
 
         // deinitialize shake detector
         stopShakeDetector(true);
-
+        //Set audo channel
+        if (AHU_AUDIOCHANNEL_STATUS) {
+            mAudioManager.setParameters("av_channel_exit=sys");
+            AHU_AUDIOCHANNEL_STATUS = false;
+        }
+        //Remove AHU button receiver
+        unregisterReceiver(mAhuButtonIntentReceiver);
+        if (D) Log.v(TAG, "Unregistering " + mAhuButtonIntentReceiver.getClass());
+        //remove widget
+        if (AHU_WIDGET_STATUS) {
+            AhuUtils.sendStateInfo(getApplicationContext(), 0);
+            AhuUtils.removeWidget(getApplicationContext());
+            AHU_WIDGET_STATUS = false;
+            if (D) Log.v(TAG, "Removing AHU WIDGETS");
+        }
+        //Stop canbus
+        AhuUtils.sendCanBusMusicOff(getApplicationContext());
         // Release the wake lock
         mWakeLock.release();
+
     }
 
     /**
@@ -805,7 +853,7 @@ public class MusicPlaybackService extends Service {
 
         if (intent != null) {
             final String action = intent.getAction();
-
+            if (D) Log.d(TAG, "action " + action);
             if (SHUTDOWN.equals(action)) {
                 mShutdownScheduled = false;
                 releaseServiceUiAndStop();
@@ -826,18 +874,24 @@ public class MusicPlaybackService extends Service {
         return START_STICKY;
     }
 
+
+
     private void releaseServiceUiAndStop() {
-        if (isPlaying()
+        if ((isPlaying()
                 || mPausedByTransientLossOfFocus
-                || mPlayerHandler.hasMessages(TRACK_ENDED)) {
+                || mPlayerHandler.hasMessages(TRACK_ENDED))) {
             return;
         }
 
-        if (D) Log.d(TAG, "Nothing is playing anymore, releasing notification");
+        if (D) Log.d(TAG, "Nothing is playing anymore, releasing notification.");
         cancelNotification();
         mAudioManager.abandonAudioFocus(mAudioFocusListener);
         mSession.setActive(false);
-
+        if (AHU_WIDGET_STATUS) {
+            AhuUtils.sendStateInfo(getApplicationContext(), 0);
+            AhuUtils.removeWidget(getApplicationContext());
+            AHU_WIDGET_STATUS = false;
+        }
         if (!mServiceInUse) {
             saveQueue(true);
             stopSelf(mServiceStartId);
@@ -883,6 +937,8 @@ public class MusicPlaybackService extends Service {
             cycleRepeat();
         } else if (SHUFFLE_ACTION.equals(action)) {
             cycleShuffle();
+        } else if (CMDSETTRACK.equals(command)) {
+            setQueuePosition(intent.getIntExtra("track", 0));
         }
     }
 
@@ -919,6 +975,8 @@ public class MusicPlaybackService extends Service {
     }
 
     private void cancelNotification() {
+
+
         stopForeground(true);
         mNotificationManager.cancel(hashCode());
         mNotificationPostTime = 0;
@@ -950,6 +1008,17 @@ public class MusicPlaybackService extends Service {
         stop(true);
         notifyChange(QUEUE_CHANGED);
         notifyChange(META_CHANGED);
+    }
+
+
+    public void registerAhuButtonIntentReceiver() {
+        if (mAhuButtonIntentReceiver == null) {
+            mAhuButtonIntentReceiver = new AhuButtonIntentReceiver();
+            final IntentFilter filter = new IntentFilter();
+            filter.addAction("com.microntek.irkeyDown");
+            registerReceiver(mAhuButtonIntentReceiver, filter);
+            if (D) Log.v(TAG, "Registering  " + mAhuButtonIntentReceiver.getClass());
+        }
     }
 
     /**
@@ -1502,6 +1571,16 @@ public class MusicPlaybackService extends Service {
             mRecentsCache.addSongId(getAudioId());
 
             mSongPlayCountCache.bumpSongCount(getAudioId());
+            //Update AHU Widgets
+            if (null != getTrackName()){
+                if (!AHU_WIDGET_STATUS) {
+                    AhuUtils.addWdiget(getApplicationContext());
+                    AHU_WIDGET_STATUS = true;
+                }
+                AhuUtils.updateWidgetTitle(getApplicationContext(), getAlbumArtistName(), getTrackName());
+                AhuUtils.updateWidgetAlbum(getApplicationContext(), getAlbumId(), getAudioId());
+            }
+
         } else if (what.equals(QUEUE_CHANGED)) {
             saveQueue(true);
             if (isPlaying()) {
@@ -1523,6 +1602,7 @@ public class MusicPlaybackService extends Service {
 
         if (what.equals(PLAYSTATE_CHANGED)) {
             updateNotification();
+            AhuUtils.updateWidgetState(getApplicationContext(), isPlaying());
         }
 
         // Update the app-widgets
@@ -2325,7 +2405,7 @@ public class MusicPlaybackService extends Service {
     }
 
     /**
-     * Helper function to wrap the logic around mIsSupposedToBePlaying for consistentcy
+     * Helper function to wrap the logic around mIsSupposedToBePlaying for consistency
      * @param value to set mIsSupposedToBePlaying to
      * @param notify whether we want to fire PLAYSTATE_CHANGED event
      */
@@ -2452,7 +2532,7 @@ public class MusicPlaybackService extends Service {
             mPlayerHandler.sendEmptyMessage(FADEUP);
 
             setIsSupposedToBePlaying(true, true);
-            AhuUtils.sendStateInfo(getApplicationContext(), 1);
+
             cancelShutdown();
             updateNotification();
         } else if (mPlaylist.size() <= 0) {
@@ -2479,7 +2559,7 @@ public class MusicPlaybackService extends Service {
                 stopShakeDetector(false);
             }
         }
-        AhuUtils.sendStateInfo(getApplicationContext(), 2);
+
     }
 
     /**
@@ -2507,7 +2587,7 @@ public class MusicPlaybackService extends Service {
             setAndRecordPlayPos(pos);
             openCurrentAndNext();
             play();
-            AhuUtils.sendStateInfo(getApplicationContext(), 1);
+
             notifyChange(META_CHANGED);
         }
     }
@@ -2555,7 +2635,7 @@ public class MusicPlaybackService extends Service {
                 seek(0);
                 play(false);
             }
-            AhuUtils.sendStateInfo(getApplicationContext(), 1);
+
         }
     }
 
@@ -2597,32 +2677,32 @@ public class MusicPlaybackService extends Service {
      * @param from The position the item is currently at
      * @param to The position the item is being moved to
      */
-    public void moveQueueItem(int index1, int index2) {
+    public void moveQueueItem(int from, int to) {
         synchronized (this) {
-            if (index1 >= mPlaylist.size()) {
-                index1 = mPlaylist.size() - 1;
+            if (from >= mPlaylist.size()) {
+                from = mPlaylist.size() - 1;
             }
-            if (index2 >= mPlaylist.size()) {
-                index2 = mPlaylist.size() - 1;
+            if (to >= mPlaylist.size()) {
+                to = mPlaylist.size() - 1;
             }
 
-            if (index1 == index2) {
+            if (from == to) {
                 return;
             }
 
-            final MusicPlaybackTrack track = mPlaylist.remove(index1);
-            if (index1 < index2) {
-                mPlaylist.add(index2, track);
-                if (mPlayPos == index1) {
-                    mPlayPos = index2;
-                } else if (mPlayPos >= index1 && mPlayPos <= index2) {
+            final MusicPlaybackTrack track = mPlaylist.remove(from);
+            if (from < to) {
+                mPlaylist.add(to, track);
+                if (mPlayPos == from) {
+                    mPlayPos = to;
+                } else if (mPlayPos >= from && mPlayPos <= to) {
                     mPlayPos--;
                 }
-            } else if (index2 < index1) {
-                mPlaylist.add(index2, track);
-                if (mPlayPos == index1) {
-                    mPlayPos = index2;
-                } else if (mPlayPos >= index2 && mPlayPos <= index1) {
+            } else if (to < from) {
+                mPlaylist.add(to, track);
+                if (mPlayPos == from) {
+                    mPlayPos = to;
+                } else if (mPlayPos >= to && mPlayPos <= from) {
                     mPlayPos++;
                 }
             }
@@ -2868,7 +2948,14 @@ public class MusicPlaybackService extends Service {
                 final int[] largeAlt = intent
                         .getIntArrayExtra(AppWidgetManager.EXTRA_APPWIDGET_IDS);
                 mAppWidgetLargeAlternate.performUpdate(MusicPlaybackService.this, largeAlt);
-            } else {
+            } else if (SHUTDOWN.equals(intent.getAction())) {
+                pause();
+                mPausedByTransientLossOfFocus = false;
+                releaseServiceUiAndStop();
+
+            }
+
+            else {
                 handleCommandIntent(intent);
             }
         }
